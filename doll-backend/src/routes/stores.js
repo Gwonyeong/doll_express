@@ -1,6 +1,53 @@
-const express = require('express');
-const { prisma } = require('../services/prisma');
-const { optionalAuth } = require('../middleware/auth');
+const express = require("express");
+const { prisma } = require("../services/prisma");
+const { optionalAuth } = require("../middleware/auth");
+
+// TM 좌표계를 WGS84(위도/경도)로 변환하는 함수
+function tmToWgs84(x, y) {
+  try {
+    const tmX = parseFloat(x);
+    const tmY = parseFloat(y);
+
+    // 이미 WGS84 좌표계인 경우 (경도 100~140, 위도 30~45 범위)
+    if (tmX >= 100 && tmX <= 140 && tmY >= 30 && tmY <= 45) {
+      return { lat: tmY, lng: tmX };
+    }
+
+    // TM 좌표계에서 WGS84로 변환 (대한민국 중부원점 기준)
+    // 이는 근사 변환식이며, 정확한 변환을 위해서는 proj4 라이브러리 필요
+    const lng = ((tmX - 200000) / 200000) * 3 + 127;
+    const lat = ((tmY - 500000) / 200000) * 1.5 + 38;
+
+    return {
+      lat: Math.max(33, Math.min(43, lat)),
+      lng: Math.max(124, Math.min(132, lng)),
+    };
+  } catch (error) {
+    console.error("좌표 변환 오류:", error);
+    return { lat: 37.5665, lng: 126.978 }; // 서울 중심 기본값
+  }
+}
+
+// WGS84(위도/경도)를 TM 좌표계로 변환하는 함수
+function wgs84ToTm(lat, lng) {
+  try {
+    const latitude = parseFloat(lat);
+    const longitude = parseFloat(lng);
+
+    // WGS84에서 TM 좌표계로 변환 (대한민국 중부원점 기준)
+    // 이는 근사 변환식이며, 정확한 변환을 위해서는 proj4 라이브러리 필요
+    const tmX = ((longitude - 127) / 3) * 200000 + 200000;
+    const tmY = ((latitude - 38) / 1.5) * 200000 + 500000;
+
+    return {
+      x: Math.max(50000, Math.min(350000, tmX)),
+      y: Math.max(0, Math.min(600000, tmY)),
+    };
+  } catch (error) {
+    console.error("좌표 변환 오류:", error);
+    return { x: 200000, y: 450000 }; // 기본값
+  }
+}
 
 const router = express.Router();
 
@@ -8,7 +55,7 @@ const router = express.Router();
  * GET /api/stores
  * 매장 목록 조회 (지도용)
  */
-router.get('/', optionalAuth, async (req, res) => {
+router.get("/", optionalAuth, async (req, res) => {
   try {
     const {
       lat,
@@ -16,105 +63,116 @@ router.get('/', optionalAuth, async (req, res) => {
       radius = 5000, // 기본 5km
       limit = 100,
       offset = 0,
-      search
+      search,
     } = req.query;
 
     let whereClause = {
-      영업상태명: '영업중', // 영업 중인 매장만
+      영업상태명: "영업/정상", // 영업 중인 매장만
     };
 
     // 검색 조건 추가
     if (search) {
       whereClause.OR = [
-        { 사업장명: { contains: search, mode: 'insensitive' } },
-        { 소재지전체주소: { contains: search, mode: 'insensitive' } },
-        { 도로명전체주소: { contains: search, mode: 'insensitive' } }
+        { 사업장명: { contains: search, mode: "insensitive" } },
+        { 소재지전체주소: { contains: search, mode: "insensitive" } },
+        { 도로명전체주소: { contains: search, mode: "insensitive" } },
       ];
     }
 
-    // 좌표 기반 필터링 (PostgreSQL의 경우 더 정확한 거리 계산 가능)
+    // 좌표 기반 필터링 (TM 좌표계 사용)
     if (lat && lng) {
       const latFloat = parseFloat(lat);
       const lngFloat = parseFloat(lng);
       const radiusKm = parseFloat(radius) / 1000;
 
-      // 간단한 박스 필터링 (더 정확한 거리 계산을 위해서는 PostGIS 사용 권장)
-      const latDelta = radiusKm / 111; // 대략적인 위도 차이
-      const lngDelta = radiusKm / (111 * Math.cos(latFloat * Math.PI / 180)); // 대략적인 경도 차이
+      // WGS84 좌표를 TM 좌표로 변환
+      const centerTm = wgs84ToTm(latFloat, lngFloat);
+
+      // TM 좌표계에서의 대략적인 반경 계산 (1km ≈ 1000 TM 단위)
+      const tmRadius = radiusKm * 1000;
 
       whereClause.좌표정보x = {
-        gte: (lngFloat - lngDelta).toString(),
-        lte: (lngFloat + lngDelta).toString()
+        gte: (centerTm.x - tmRadius).toString(),
+        lte: (centerTm.x + tmRadius).toString(),
       };
       whereClause.좌표정보y = {
-        gte: (latFloat - latDelta).toString(),
-        lte: (latFloat + latDelta).toString()
+        gte: (centerTm.y - tmRadius).toString(),
+        lte: (centerTm.y + tmRadius).toString(),
       };
     }
 
+    console.log(whereClause);
     const stores = await prisma.gameBusiness.findMany({
       where: whereClause,
-      select: {
-        id: true,
-        사업장명: true,
-        소재지전체주소: true,
-        도로명전체주소: true,
-        좌표정보x: true,
-        좌표정보y: true,
-        소재지전화: true,
-        영업상태명: true,
-        최종수정시점: true,
+      take: parseInt(limit),
+      skip: parseInt(offset),
+      include: {
         reviews: {
           select: {
-            id: true,
             rating: true,
-            createdAt: true
-          }
-        }
+          },
+        },
       },
-      skip: parseInt(offset),
-      take: parseInt(limit),
-      orderBy: {
-        최종수정시점: 'desc'
-      }
     });
 
-    // 평균 평점 계산
-    const storesWithRating = stores.map(store => {
-      const ratings = store.reviews.map(r => r.rating);
-      const avgRating = ratings.length > 0 ?
-        ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : 0;
+    // 거리 계산 및 응답 포맷팅
+    const formattedStores = stores.map((store) => {
+      // TM 좌표계를 WGS84로 변환
+      const coords = tmToWgs84(store.좌표정보x, store.좌표정보y);
+
+      let distance = 0;
+      if (lat && lng) {
+        const latFloat = parseFloat(lat);
+        const lngFloat = parseFloat(lng);
+
+        const R = 6371; // 지구 반지름 (km)
+        const dLat = ((coords.lat - latFloat) * Math.PI) / 180;
+        const dLng = ((coords.lng - lngFloat) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((latFloat * Math.PI) / 180) *
+            Math.cos((coords.lat * Math.PI) / 180) *
+            Math.sin(dLng / 2) *
+            Math.sin(dLng / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        distance = Math.round(R * c * 10) / 10;
+      }
+
+      // 평균 평점 계산
+      const ratings = store.reviews.map((r) => r.rating);
+      const avgRating =
+        ratings.length > 0
+          ? Math.round(
+              (ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10
+            ) / 10
+          : 0;
 
       return {
         id: store.id,
         name: store.사업장명,
         address: store.도로명전체주소 || store.소재지전체주소,
         phone: store.소재지전화,
-        latitude: parseFloat(store.좌표정보y),
-        longitude: parseFloat(store.좌표정보x),
+        lat: coords.lat,
+        lng: coords.lng,
+        distance,
         status: store.영업상태명,
-        lastUpdated: store.최종수정시점,
+        category: store.업태구분명,
+        gameCount: null,
+        area: store.소재지전체주소?.split(" ")[1] || "",
+        averageRating: avgRating,
         reviewCount: store.reviews.length,
-        averageRating: Math.round(avgRating * 10) / 10,
-        reviews: undefined // 리뷰 데이터는 제거
       };
     });
 
     res.json({
       success: true,
-      data: storesWithRating,
-      pagination: {
-        limit: parseInt(limit),
-        offset: parseInt(offset),
-        total: stores.length
-      }
+      data: formattedStores,
     });
-
   } catch (error) {
-    console.error('매장 목록 조회 오류:', error);
+    console.error("매장 목록 조회 오류:", error);
     res.status(500).json({
-      error: 'Internal Server Error',
-      message: '매장 목록을 불러오는 중 오류가 발생했습니다.'
+      error: "Internal Server Error",
+      message: "매장 목록을 불러오는 중 오류가 발생했습니다.",
     });
   }
 });
@@ -123,7 +181,7 @@ router.get('/', optionalAuth, async (req, res) => {
  * GET /api/stores/:id
  * 특정 매장 상세 정보 조회
  */
-router.get('/:id', optionalAuth, async (req, res) => {
+router.get("/:id", optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -136,45 +194,50 @@ router.get('/:id', optionalAuth, async (req, res) => {
               select: {
                 id: true,
                 nickname: true,
-                avatar: true
-              }
-            }
+                avatar: true,
+              },
+            },
           },
           orderBy: {
-            createdAt: 'desc'
-          }
-        }
-      }
+            createdAt: "desc",
+          },
+        },
+      },
     });
 
     if (!store) {
       return res.status(404).json({
-        error: 'Not Found',
-        message: '매장을 찾을 수 없습니다.'
+        error: "Not Found",
+        message: "매장을 찾을 수 없습니다.",
       });
     }
 
     // 평균 평점 계산
-    const ratings = store.reviews.map(r => r.rating);
-    const averageRating = ratings.length > 0 ?
-      ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : 0;
+    const ratings = store.reviews.map((r) => r.rating);
+    const averageRating =
+      ratings.length > 0
+        ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length
+        : 0;
+
+    // TM 좌표계를 WGS84로 변환
+    const coords = tmToWgs84(store.좌표정보x, store.좌표정보y);
 
     const storeData = {
       id: store.id,
       name: store.사업장명,
       address: store.도로명전체주소 || store.소재지전체주소,
       phone: store.소재지전화,
-      latitude: parseFloat(store.좌표정보y),
-      longitude: parseFloat(store.좌표정보x),
+      lat: coords.lat,
+      lng: coords.lng,
       status: store.영업상태명,
-      businessType: store.업태구분명,
+      category: store.업태구분명,
       totalFloors: store.총층수,
       facilityArea: store.시설면적,
       gameCount: store.총게임기수,
       lastUpdated: store.최종수정시점,
       reviewCount: store.reviews.length,
       averageRating: Math.round(averageRating * 10) / 10,
-      reviews: store.reviews.map(review => ({
+      reviews: store.reviews.map((review) => ({
         id: review.id,
         rating: review.rating,
         content: review.content,
@@ -183,51 +246,51 @@ router.get('/:id', optionalAuth, async (req, res) => {
         userName: review.user ? review.user.nickname : review.userName,
         userAvatar: review.user?.avatar,
         createdAt: review.createdAt,
-        updatedAt: review.updatedAt
-      }))
+        updatedAt: review.updatedAt,
+      })),
     };
 
     res.json({
       success: true,
-      data: storeData
+      data: storeData,
     });
-
   } catch (error) {
-    console.error('매장 상세 조회 오류:', error);
+    console.error("매장 상세 조회 오류:", error);
     res.status(500).json({
-      error: 'Internal Server Error',
-      message: '매장 정보를 불러오는 중 오류가 발생했습니다.'
+      error: "Internal Server Error",
+      message: "매장 정보를 불러오는 중 오류가 발생했습니다.",
     });
   }
 });
+
 
 /**
  * GET /api/stores/search
  * 매장 검색 (자동완성용)
  */
-router.get('/search/suggestions', async (req, res) => {
+router.get("/search/suggestions", async (req, res) => {
   try {
     const { q, limit = 10 } = req.query;
 
     if (!q || q.length < 2) {
       return res.json({
         success: true,
-        data: []
+        data: [],
       });
     }
 
     const suggestions = await prisma.gameBusiness.findMany({
       where: {
         AND: [
-          { 영업상태명: '영업중' },
+          { 영업상태명: "영업/정상" },
           {
             OR: [
-              { 사업장명: { contains: q, mode: 'insensitive' } },
-              { 소재지전체주소: { contains: q, mode: 'insensitive' } },
-              { 도로명전체주소: { contains: q, mode: 'insensitive' } }
-            ]
-          }
-        ]
+              { 사업장명: { contains: q, mode: "insensitive" } },
+              { 소재지전체주소: { contains: q, mode: "insensitive" } },
+              { 도로명전체주소: { contains: q, mode: "insensitive" } },
+            ],
+          },
+        ],
       },
       select: {
         id: true,
@@ -235,32 +298,36 @@ router.get('/search/suggestions', async (req, res) => {
         소재지전체주소: true,
         도로명전체주소: true,
         좌표정보x: true,
-        좌표정보y: true
+        좌표정보y: true,
       },
       take: parseInt(limit),
       orderBy: {
-        사업장명: 'asc'
-      }
+        사업장명: "asc",
+      },
     });
 
-    const formattedSuggestions = suggestions.map(store => ({
-      id: store.id,
-      name: store.사업장명,
-      address: store.도로명전체주소 || store.소재지전체주소,
-      latitude: parseFloat(store.좌표정보y),
-      longitude: parseFloat(store.좌표정보x)
-    }));
+    const formattedSuggestions = suggestions.map((store) => {
+      // TM 좌표계를 WGS84로 변환
+      const coords = tmToWgs84(store.좌표정보x, store.좌표정보y);
+
+      return {
+        id: store.id,
+        name: store.사업장명,
+        address: store.도로명전체주소 || store.소재지전체주소,
+        latitude: coords.lat,
+        longitude: coords.lng,
+      };
+    });
 
     res.json({
       success: true,
-      data: formattedSuggestions
+      data: formattedSuggestions,
     });
-
   } catch (error) {
-    console.error('매장 검색 오류:', error);
+    console.error("매장 검색 오류:", error);
     res.status(500).json({
-      error: 'Internal Server Error',
-      message: '매장 검색 중 오류가 발생했습니다.'
+      error: "Internal Server Error",
+      message: "매장 검색 중 오류가 발생했습니다.",
     });
   }
 });
