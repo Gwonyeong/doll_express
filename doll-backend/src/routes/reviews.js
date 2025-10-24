@@ -82,7 +82,7 @@ router.get('/store/:storeId', optionalAuth, async (req, res) => {
  * POST /api/reviews
  * 새 리뷰 작성
  */
-router.post('/', async (req, res) => {
+router.post('/', optionalAuth, async (req, res) => {
   try {
     const { storeId, rating, content, images = [], tags = [], userName } = req.body;
 

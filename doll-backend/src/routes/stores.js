@@ -17,9 +17,19 @@ function tmToWgs84(x, y) {
     const tmX = parseFloat(x);
     const tmY = parseFloat(y);
 
+    // NaN, Infinity 체크
+    if (!isFinite(tmX) || !isFinite(tmY) || isNaN(tmX) || isNaN(tmY)) {
+      return { lat: 37.5665, lng: 126.978 }; // 서울 중심 기본값
+    }
+
     // 이미 WGS84 좌표계인 경우 (경도 100~140, 위도 30~45 범위)
     if (tmX >= 100 && tmX <= 140 && tmY >= 30 && tmY <= 45) {
       return { lat: tmY, lng: tmX };
+    }
+
+    // TM 좌표계 유효 범위 체크 (한국 좌표 범위)
+    if (tmX < 50000 || tmX > 350000 || tmY < 0 || tmY > 700000) {
+      return { lat: 37.5665, lng: 126.978 };
     }
 
     // proj4를 사용한 정확한 좌표 변환
@@ -35,7 +45,6 @@ function tmToWgs84(x, y) {
       lng: Math.max(124, Math.min(132, correctedLng)),
     };
   } catch (error) {
-    console.error("좌표 변환 오류:", error);
     // 서울 중심 기본값
     return { lat: 37.5665, lng: 126.978 };
   }
@@ -47,6 +56,16 @@ function wgs84ToTm(lat, lng) {
     const latitude = parseFloat(lat);
     const longitude = parseFloat(lng);
 
+    // NaN, Infinity 체크
+    if (!isFinite(latitude) || !isFinite(longitude) || isNaN(latitude) || isNaN(longitude)) {
+      return { x: 200000, y: 450000 }; // 중부원점 근처 기본값
+    }
+
+    // WGS84 유효 범위 체크 (한국 지역)
+    if (latitude < 33 || latitude > 43 || longitude < 124 || longitude > 132) {
+      return { x: 200000, y: 450000 };
+    }
+
     // proj4를 사용한 정확한 좌표 변환
     const [tmX, tmY] = proj4(wgs84, epsg5174, [longitude, latitude]);
 
@@ -55,7 +74,6 @@ function wgs84ToTm(lat, lng) {
       y: Math.max(0, Math.min(600000, tmY)),
     };
   } catch (error) {
-    console.error("좌표 변환 오류:", error);
     // 중부원점 근처 기본값
     return { x: 200000, y: 450000 };
   }
@@ -125,6 +143,17 @@ router.get("/", optionalAuth, async (req, res) => {
     console.log("stores:", stores.length);
     // 거리 계산 및 응답 포맷팅
     const formattedStores = stores.map((store) => {
+      // 좌표 값이 없으면 기본값 사용
+      if (!store.좌표정보x || !store.좌표정보y) {
+        const defaultCoords = { lat: 37.5665, lng: 126.978 };
+        return {
+          ...store,
+          latitude: defaultCoords.lat,
+          longitude: defaultCoords.lng,
+          거리: 0
+        };
+      }
+
       // TM 좌표계를 WGS84로 변환
       const coords = tmToWgs84(store.좌표정보x, store.좌표정보y);
 
@@ -232,8 +261,14 @@ router.get("/:id", optionalAuth, async (req, res) => {
         ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length
         : 0;
 
-    // TM 좌표계를 WGS84로 변환
-    const coords = tmToWgs84(store.좌표정보x, store.좌표정보y);
+    // 좌표 값 검증 및 변환
+    let coords;
+    if (!store.좌표정보x || !store.좌표정보y) {
+      coords = { lat: 37.5665, lng: 126.978 }; // 서울 중심 기본값
+    } else {
+      // TM 좌표계를 WGS84로 변환
+      coords = tmToWgs84(store.좌표정보x, store.좌표정보y);
+    }
 
     const storeData = {
       id: store.id,
@@ -319,8 +354,14 @@ router.get("/search/suggestions", async (req, res) => {
     });
 
     const formattedSuggestions = suggestions.map((store) => {
-      // TM 좌표계를 WGS84로 변환
-      const coords = tmToWgs84(store.좌표정보x, store.좌표정보y);
+      // 좌표 값 검증 및 변환
+      let coords;
+      if (!store.좌표정보x || !store.좌표정보y) {
+        coords = { lat: 37.5665, lng: 126.978 };
+      } else {
+        // TM 좌표계를 WGS84로 변환
+        coords = tmToWgs84(store.좌표정보x, store.좌표정보y);
+      }
 
       return {
         id: store.id,
