@@ -1,5 +1,6 @@
 const express = require("express");
 const https = require("https");
+const { decryptUserInfo } = require("../utils/encryption");
 const router = express.Router();
 
 // Toss 토큰 생성 프록시 엔드포인트
@@ -184,7 +185,8 @@ router.get("/user-info", async (req, res) => {
   try {
     // Authorization 헤더에서 Bearer 토큰 추출
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.log("Toss user info: authHeader", authHeader);
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json({
         success: false,
         error: "Bearer 토큰이 필요합니다.",
@@ -212,7 +214,7 @@ router.get("/user-info", async (req, res) => {
       key: key,
       rejectUnauthorized: true,
       headers: {
-        "Authorization": `Bearer ${accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
     };
@@ -248,9 +250,26 @@ router.get("/user-info", async (req, res) => {
 
     // Toss API 응답을 클라이언트에 전달
     if (response.statusCode === 200) {
+      // 사용자 정보 복호화
+      const encryptionKey = process.env.TOSS_ENCRYPTION_KEY;
+      const aad = process.env.TOSS_AAD;
+      console.log("Toss user info: response", response.data);
+      let processedData = response.data;
+
+      // 복호화 키와 AAD가 있는 경우 복호화 수행
+      if (encryptionKey && aad && response.data.resultType === "SUCCESS") {
+        try {
+          processedData = decryptUserInfo(response.data, encryptionKey, aad);
+        } catch (decryptError) {
+          console.error("사용자 정보 복호화 실패:", decryptError.message);
+          // 복호화 실패 시 원본 데이터 사용
+          processedData = response.data;
+        }
+      }
+      console.log("Toss user info:", processedData);
       res.json({
         success: true,
-        data: response.data,
+        data: processedData,
       });
     } else {
       res.status(response.statusCode).json({
