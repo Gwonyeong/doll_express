@@ -39,10 +39,16 @@ const corsOptions = {
       }
     } else {
       // 프로덕션 환경에서는 환경변수로 지정된 도메인만 허용
-      const allowedOrigin = process.env.FRONTEND_URL;
-      if (origin === allowedOrigin || !origin) {
+      const allowedOrigins = [
+        process.env.FRONTEND_URL,
+        "https://dollpickmap.apps.tossmini.com",
+        "https://dollpickmap.private-apps.tossmini.com",
+      ].filter(Boolean); // undefined 값 제거
+
+      if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
+        console.log("CORS 차단된 origin:", origin);
         callback(new Error("Not allowed by CORS"));
       }
     }
@@ -111,10 +117,12 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 서버 시작
-app.listen(PORT, () => {
-  console.log(`🚀 DollCatcher API Server가 포트 ${PORT}에서 실행 중입니다.`);
-  console.log(`📍 Health check: http://localhost:${PORT}/health`);
-});
+// 서버 시작 (로컬 개발용)
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => {
+    console.log(`🚀 DollCatcher API Server가 포트 ${PORT}에서 실행 중입니다.`);
+    console.log(`📍 Health check: http://localhost:${PORT}/health`);
+  });
+}
 
 module.exports = app;

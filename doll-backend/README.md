@@ -2,6 +2,28 @@
 
 DollCatcher의 Express.js 백엔드 API 서버입니다.
 
+## 🌐 Vercel 배포
+
+### 환경 변수 설정
+Vercel 대시보드에서 다음 환경 변수들을 설정하세요:
+
+```env
+NODE_ENV=production
+DATABASE_URL=postgresql://username:password@host:port/database?schema=schema_name
+FRONTEND_URL=https://your-frontend-domain.com
+TOSS_CLIENT_ID=your_toss_client_id
+TOSS_CERT=your_base64_encoded_certificate
+TOSS_PRIVATE=your_base64_encoded_private_key
+TOSS_ENCRYPTION_KEY=your_encryption_key
+TOSS_AAD=your_aad_value
+ADMIN_PASSWORD=your_admin_password
+```
+
+### 배포 명령어
+```bash
+vercel --prod
+```
+
 ## 🚀 시작하기
 
 ### 환경 요구사항
