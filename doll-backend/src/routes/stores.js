@@ -6,7 +6,8 @@ const proj4 = require("proj4");
 // EPSG:5174 (Korea 2000 / Central Belt 2010) 좌표계 정의
 // 중부원점(Central Belt) 사용 - 서울/경기 지역에 적합
 // towgs84 파라미터를 한국 측지계에 최적화
-const epsg5174 = "+proj=tmerc +lat_0=38 +lon_0=127 +k=1 +x_0=200000 +y_0=500000 +ellps=GRS80 +units=m +no_defs";
+const epsg5174 =
+  "+proj=tmerc +lat_0=38 +lon_0=127 +k=1 +x_0=200000 +y_0=500000 +ellps=GRS80 +units=m +no_defs";
 
 // WGS84 좌표계 정의
 const wgs84 = "+proj=longlat +datum=WGS84 +no_defs";
@@ -38,7 +39,7 @@ function tmToWgs84(x, y) {
     // 시스템적 오차 보정 (평균 오차 적용)
     // 분석 결과: 위도 +0.002747도, 경도 +0.000790도 보정 필요
     const correctedLat = lat + 0.002747;
-    const correctedLng = lng + 0.000790;
+    const correctedLng = lng + 0.00079;
 
     return {
       lat: Math.max(33, Math.min(43, correctedLat)),
@@ -57,7 +58,12 @@ function wgs84ToTm(lat, lng) {
     const longitude = parseFloat(lng);
 
     // NaN, Infinity 체크
-    if (!isFinite(latitude) || !isFinite(longitude) || isNaN(latitude) || isNaN(longitude)) {
+    if (
+      !isFinite(latitude) ||
+      !isFinite(longitude) ||
+      isNaN(latitude) ||
+      isNaN(longitude)
+    ) {
       return { x: 200000, y: 450000 }; // 중부원점 근처 기본값
     }
 
@@ -88,8 +94,8 @@ const router = express.Router();
 router.get("/", optionalAuth, async (req, res) => {
   try {
     const {
-      lat,
-      lng,
+      lat = 37.413294,
+      lng = 127.269311,
       radius = 2000, // 기본 5km
 
       search,
@@ -140,7 +146,7 @@ router.get("/", optionalAuth, async (req, res) => {
         },
       },
     });
-    console.log("stores:", stores.length);
+
     // 거리 계산 및 응답 포맷팅
     const formattedStores = stores.map((store) => {
       // 좌표 값이 없으면 기본값 사용
@@ -150,7 +156,7 @@ router.get("/", optionalAuth, async (req, res) => {
           ...store,
           latitude: defaultCoords.lat,
           longitude: defaultCoords.lng,
-          거리: 0
+          거리: 0,
         };
       }
 

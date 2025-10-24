@@ -185,7 +185,7 @@ router.get("/user-info", async (req, res) => {
   try {
     // Authorization 헤더에서 Bearer 토큰 추출
     const authHeader = req.headers.authorization;
-    console.log("Toss user info: authHeader", authHeader);
+
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json({
         success: false,
@@ -253,7 +253,7 @@ router.get("/user-info", async (req, res) => {
       // 사용자 정보 복호화
       const encryptionKey = process.env.TOSS_ENCRYPTION_KEY;
       const aad = process.env.TOSS_AAD;
-      console.log("Toss user info: response", response.data);
+
       let processedData = response.data;
 
       // 복호화 키와 AAD가 있는 경우 복호화 수행
@@ -266,7 +266,7 @@ router.get("/user-info", async (req, res) => {
           processedData = response.data;
         }
       }
-      console.log("Toss user info:", processedData);
+
       res.json({
         success: true,
         data: processedData,
